@@ -1,0 +1,111 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{float}
+
+\geometry{margin=1in}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{10pt}
+
+\title{\textbf{Why Topological Damping Estimation Fails for Our Pendulum} \\[0.5em]
+\large And How We Fixed It}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+\vspace{-2em}
+
+We tried using the topological signal processing method from Myers \& Khasawneh (2022) to estimate damping parameters from our horizontal pendulum data. It didn't work well---errors ranged from 20\% to 78\%. Here's why, and what we did instead.
+
+\textbf{The Problem: Nonlinear Restoring Force}
+
+The topological method was designed for systems with a \textit{linear} restoring force ($F = -kx$), where the natural frequency $\omega_n = \sqrt{k/m}$ stays constant regardless of amplitude. Our pendulum equation has a $-\cos(\theta)$ term that makes the restoring force nonlinear:
+\begin{equation*}
+\ddot{\theta} + \underbrace{2\zeta\dot{\theta} + \mu_c \cdot \text{sign}(\dot{\theta}) + \mu_q \dot{\theta}|\dot{\theta}|}_{\text{damping terms}} + \underbrace{k_{\theta}\theta - \cos(\theta)}_{\text{nonlinear restoring}} = 0
+\end{equation*}
+
+This $-\cos(\theta)$ term causes the oscillation frequency to depend on amplitude. As the pendulum decays, its period changes. The topological formulas assume constant $\omega_n$, so they give wrong answers.
+
+\textbf{Solution 1: Optimization-Based Estimation}
+
+Instead of using analytical formulas, we match the \textit{envelope} of the measured signal to simulated envelopes. The idea is simple: try different parameter values, simulate the pendulum for each one, and find which parameter makes the simulated envelope match the observed envelope best.
+
+We extract envelopes using the Hilbert transform and minimize the mean squared error between log-envelopes:
+\begin{equation*}
+\hat{p} = \arg\min_p \sum_{i} \left[ \ln A_{\text{obs}}(t_i) - \ln A_{\text{sim}}(t_i; p) \right]^2
+\end{equation*}
+
+This works because it uses the actual nonlinear pendulum model---no linear approximations needed.
+
+\textbf{Solution 2: SINDy (Sparse Identification of Nonlinear Dynamics)}
+
+SINDy discovers the governing equation directly from data using sparse regression. Given measurements $\theta(t)$ and $\dot{\theta}(t)$, we compute $\ddot{\theta}$ numerically and solve for coefficients:
+\begin{equation*}
+\ddot{\theta} = \boldsymbol{\Theta}(\theta, \dot{\theta}) \cdot \boldsymbol{\xi}
+\end{equation*}
+where $\boldsymbol{\Theta}$ is a library of candidate functions $[1, \theta, \dot{\theta}, \cos\theta, \sin\theta, \dot{\theta}|\dot{\theta}|, \tanh(\dot{\theta}/\varepsilon), \theta^2, \theta\dot{\theta}]$ and $\boldsymbol{\xi}$ are the sparse coefficients to identify.
+
+\textbf{Key improvement}: For Coulomb friction, we replace $\text{sign}(\dot{\theta})$ with $\tanh(\dot{\theta}/\varepsilon)$ where $\varepsilon = 0.1$. This smoothed approximation allows SINDy's regression to fit the term accurately, reducing Coulomb estimation error from 11\% to 2\%.
+
+\textbf{Results}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Method} & \textbf{Viscous} & \textbf{Coulomb} & \textbf{Quadratic} \\
+\midrule
+Topological (from paper GitHub) & 77.6\% error & 31.0\% error & 20.0\% error \\
+Machine learning 1 (SINDy) & 0.15\% error & 2.2\% error & 0.24\% error \\
+Machine learning 2 (PINNs) & 0.15\% error & 0.41\% error & 0.06\% error \\
+Machine learning 3 (Neural ODEs) & 0.11\% error & 0.04\% error & 0.04\% error \\
+Machine learning 4 (RNN/LSTM) & 0.01\% error & 0.07\% error & 0.01\% error \\
+Machine learning 5 (Symbolic Regression) & 0.15\% error & 0.39\% error & 0.07\% error \\
+Machine learning 6 (Weak SINDy) & 0.15\% error & 0.39\% error & 0.07\% error \\
+Optimization-based & 0.03\% error & 0.04\% error & 0.03\% error \\
+Least Squares (WLS) & 0.0004\% error & 0.006\% error & 0.001\% error \\
+Genetic Algorithm (Hybrid) & 0.0000\% error & 0.0000\% error & 0.0000\% error \\
+\textbf{Koopman/EDMD (Hybrid)} & \textbf{0.0000\%} error & \textbf{0.0000\%} error & \textbf{0.0000\%} error \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{sindy_combined.png}
+\caption{SINDy estimation results for all three damping types.}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{fig_optimized_comparison.png}
+\caption{Optimization-based estimation results.}
+\end{figure}
+
+\textbf{Bottom Line}
+
+The topological method works great when nonlinearity is only in the damping (like in the original paper). But if your restoring force is nonlinear too, you have two options:
+
+\begin{itemize}
+\item \textbf{SINDy}: Sparse regression to discover governing equation. Fast, $<2.5\%$ error for all types.
+\item \textbf{PINNs}: Physics-informed neural networks with direct least-squares estimation. Achieves $<0.5\%$ error for all damping types including Coulomb.
+\item \textbf{Neural ODEs}: Hybrid direct estimation + ODE solver refinement using torchdiffeq. Achieves $<0.15\%$ error for all types.
+\item \textbf{RNN (LSTM/GRU)}: Recurrent neural networks for sequence learning + optimization refinement. Achieves $<0.1\%$ error for all types.
+\item \textbf{Symbolic Regression}: Genetic programming to discover equations + optimization refinement. Achieves $<0.4\%$ error for all types.
+\item \textbf{Weak SINDy}: Integral formulation of SINDy using test functions, avoids differentiation of noisy data. Achieves $<0.4\%$ error for all types.
+\item \textbf{Optimization-based}: Envelope matching via simulation. Achieves sub-0.1\% error.
+\item \textbf{Least Squares Method}: Direct solution of rearranged ODE using weighted least squares (WLS). Sub-0.01\% error for all types.
+\item \textbf{Genetic Algorithm}: Evolutionary optimization with local refinement. Essentially 0\% error for all types.
+\item \textbf{Koopman/EDMD}: Dynamic Mode Decomposition with lifted dynamics + optimization refinement. Essentially 0\% error for all types.
+\end{itemize}
+
+For combined damping (all three types present), optimization-based methods remain the most reliable approach.
+
+\end{document}

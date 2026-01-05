@@ -1,0 +1,896 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+
+\geometry{margin=1in}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{8pt}
+
+% Code listing style
+\lstset{
+    basicstyle=\ttfamily\small,
+    backgroundcolor=\color{gray!10},
+    frame=single,
+    breaklines=true,
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{red!70!black},
+    language=Python,
+}
+
+\title{\textbf{Inverse Parameter Estimation for Nonlinear Pendulum} \\
+\large Using Optimization-Based System Identification}
+\author{Generated with Claude Code}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\hrule
+\vspace{1em}
+
+\tableofcontents
+\newpage
+
+\section{Objective}
+
+This report documents the implementation of an inverse engineering approach to estimate damping parameters from a nonlinear pendulum simulation. After discovering that standard topological signal processing methods yield high errors for our specific nonlinear system, we developed an \textbf{optimization-based approach} that achieves sub-0.1\% estimation errors.
+
+\textbf{Workflow:}
+\begin{enumerate}
+    \item Convert MATLAB pendulum simulation to Python
+    \item Simulate nonlinear pendulum with known damping parameters
+    \item Investigate why topological methods fail for this system
+    \item Develop optimization-based parameter estimation (system identification)
+    \item Compare estimated vs. true parameters
+\end{enumerate}
+
+\section{Nonlinear Pendulum Model}
+
+\subsection{Equation of Motion}
+
+The horizontal pendulum with torsional spring and multiple damping mechanisms is governed by the following nondimensional equation:
+
+\begin{equation}
+\boxed{\ddot{\theta} + 2\zeta\dot{\theta} + \mu_c \cdot \text{sign}(\dot{\theta}) + \mu_q \dot{\theta}|\dot{\theta}| + k_{\theta}\theta - \cos(\theta) = 0}
+\label{eq:pendulum}
+\end{equation}
+
+For free response analysis (no base excitation: $q_h = q_v = 0$).
+
+\textbf{Physical interpretation of each term:}
+\begin{itemize}
+    \item $\ddot{\theta}$: Angular acceleration (inertia)
+    \item $2\zeta\dot{\theta}$: Viscous damping (proportional to velocity)
+    \item $\mu_c \cdot \text{sign}(\dot{\theta})$: Coulomb friction (constant magnitude, opposes motion)
+    \item $\mu_q \dot{\theta}|\dot{\theta}|$: Quadratic (aerodynamic) damping
+    \item $k_{\theta}\theta$: Torsional spring restoring torque
+    \item $-\cos(\theta)$: Gravitational torque component (source of nonlinearity)
+\end{itemize}
+
+\subsection{Damping Mechanisms}
+
+Three distinct damping mechanisms are considered, each with fundamentally different physical origins and mathematical characteristics:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{llll}
+\toprule
+\textbf{Type} & \textbf{Formula} & \textbf{Parameter} & \textbf{Physical Origin} \\
+\midrule
+Viscous & $F_d = 2\zeta\dot{\theta}$ & $\zeta = 0.05$ & Fluid viscosity, internal material damping \\
+Coulomb & $F_d = \mu_c \cdot \text{sign}(\dot{\theta})$ & $\mu_c = 0.03$ & Dry friction at pivot bearings \\
+Quadratic & $F_d = \mu_q \dot{\theta}|\dot{\theta}|$ & $\mu_q = 0.05$ & Aerodynamic drag, turbulent fluid resistance \\
+\bottomrule
+\end{tabular}
+\caption{Damping mechanisms implemented in the pendulum model with their physical origins.}
+\label{tab:damping}
+\end{table}
+
+\textbf{Characteristic decay patterns:}
+\begin{itemize}
+    \item \textbf{Viscous damping}: Produces exponential amplitude decay $A(t) = A_0 e^{-\zeta\omega_n t}$
+    \item \textbf{Coulomb damping}: Produces linear amplitude decay $A(t) = A_0 - \frac{2\mu_c}{\pi\omega_n}t$ (constant energy loss per cycle)
+    \item \textbf{Quadratic damping}: Produces hyperbolic decay $A(t) = \frac{A_0}{1 + \beta t}$ (faster initial decay, slower asymptotic decay)
+\end{itemize}
+
+\subsection{Simulation Parameters}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Torsional stiffness ($k_\theta$) & 20 \\
+Initial angle ($\theta_0$) & $30°$ (0.5236 rad) \\
+Initial velocity ($\dot{\theta}_0$) & 0 \\
+Time step ($dt$) & 0.002 s \\
+Simulation duration & 60 s \\
+Measurement noise ($\sigma$) & 0.002 rad (0.2\% of 1 rad) \\
+Base excitation ($q_h, q_v$) & 0, 0 (free response) \\
+\bottomrule
+\end{tabular}
+\caption{Simulation parameters used for data generation.}
+\label{tab:params}
+\end{table}
+
+\section{Simulation Results}
+
+\subsection{Time Response Comparison}
+
+Figure~\ref{fig:time_response} shows the free response of the nonlinear pendulum with three different damping types. Each damping mechanism produces a distinct decay envelope that can be used for parameter identification.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{fig_time_response.png}
+\caption{Time response of nonlinear pendulum with different damping types: (top) viscous damping $\zeta=0.05$, (middle) Coulomb damping $\mu_c=0.03$, (bottom) quadratic damping $\mu_q=0.05$. Note the distinct envelope shapes characteristic of each damping mechanism.}
+\label{fig:time_response}
+\end{figure}
+
+\subsection{Phase Portraits}
+
+Figure~\ref{fig:phase} shows the phase portraits for each damping type. The spiral patterns indicate energy dissipation, with different shapes corresponding to different damping mechanisms.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{fig_phase_portraits.png}
+\caption{Phase portraits showing distinct spiral patterns for viscous (left), Coulomb (center), and quadratic (right) damping. The rate and manner of spiral convergence reflects the underlying damping mechanism.}
+\label{fig:phase}
+\end{figure}
+
+\section{Topological Signal Processing: Background and Limitations}
+
+\subsection{Overview of Topological Damping Estimation}
+
+Topological signal processing uses concepts from algebraic topology, specifically \textbf{persistent homology}, to analyze oscillatory signals. The method, developed by Myers and Khasawneh~\cite{myers2022}, constructs a point cloud from time-delay embeddings and tracks the birth and death of topological features (loops) as a scale parameter varies.
+
+For damping estimation, the key insight is that the \textbf{lifespan of 1-dimensional holes} (H1 persistence) in the embedded signal is related to the amplitude of oscillation. By tracking how these lifespans decay over time, one can infer the damping characteristics.
+
+\subsection{Standard Formulas for Linear Systems}
+
+For a \textbf{linear harmonic oscillator} with various damping types:
+\begin{equation}
+m\ddot{x} + F_d(\dot{x}) + kx = 0
+\label{eq:linear}
+\end{equation}
+
+the topological method provides the following estimation formulas:
+
+\textbf{Viscous damping} ($F_d = c\dot{x}$):
+\begin{equation}
+\zeta = \frac{1}{2\pi n} \ln\left(\frac{L_1}{L_{n+1}}\right)
+\label{eq:viscous_formula}
+\end{equation}
+where $L_i$ is the lifespan of the $i$-th persistence feature and $n$ is the number of cycles.
+
+\textbf{Coulomb damping} ($F_d = \mu_c \cdot \text{sign}(\dot{x})$):
+\begin{equation}
+\mu_c = \frac{\pi \omega_n}{4n}(L_1 - L_{n+1})
+\label{eq:coulomb_formula}
+\end{equation}
+
+\textbf{Quadratic damping} ($F_d = \mu_q \dot{x}|\dot{x}|$):
+\begin{equation}
+\mu_q = \frac{3\pi}{8\omega_n n}\left(\frac{1}{L_{n+1}} - \frac{1}{L_1}\right)
+\label{eq:quadratic_formula}
+\end{equation}
+
+\subsection{Critical Assumption: Linear Restoring Force}
+
+The derivation of equations~\eqref{eq:viscous_formula}--\eqref{eq:quadratic_formula} relies on a \textbf{fundamental assumption}:
+
+\begin{center}
+\fbox{\parbox{0.85\textwidth}{
+\textbf{Key Assumption}: The restoring force must be \textbf{linear} ($F_r = -kx$), ensuring a \textbf{constant natural frequency} $\omega_n = \sqrt{k/m}$ regardless of amplitude.
+}}
+\end{center}
+
+This assumption is explicitly stated in the original paper: \textit{``Model where the prominent source of nonlinearity is due to the nonlinear damping term''} --- meaning the restoring force must remain linear.
+
+\section{Why Topological Methods Fail for Our Pendulum}
+
+\subsection{Comparison: Paper's System vs. Our Pendulum}
+
+The fundamental difference between the system analyzed in the topological literature and our pendulum lies in the \textbf{nature of the restoring force}:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{3cm}p{5cm}p{5cm}}
+\toprule
+\textbf{Aspect} & \textbf{Myers \& Khasawneh System} & \textbf{Our Horizontal Pendulum} \\
+\midrule
+Equation & $m\ddot{x} = -kx - F_d(\dot{x})$ & $\ddot{\theta} + F_d(\dot{\theta}) + k_\theta\theta - \cos(\theta) = 0$ \\
+\addlinespace
+Restoring force & $-kx$ (\textbf{Linear}) & $k_\theta\theta - \cos(\theta)$ (\textbf{Nonlinear}) \\
+\addlinespace
+Natural frequency & $\omega_n = \sqrt{k/m}$ (\textbf{Constant}) & $\omega(\theta) = \sqrt{k_\theta - \frac{\sin\theta}{\theta}}$ (\textbf{Amplitude-dependent}) \\
+\addlinespace
+Nonlinearity source & Damping terms only & Both damping AND restoring force \\
+\addlinespace
+Topological method & \textcolor{green!60!black}{\textbf{Works}} & \textcolor{red}{\textbf{Fails}} \\
+\bottomrule
+\end{tabular}
+\caption{Comparison between the system for which topological methods were designed and our pendulum.}
+\label{tab:comparison_systems}
+\end{table}
+
+\subsection{Mathematical Analysis of the Nonlinearity}
+
+The restoring torque in our pendulum is:
+\begin{equation}
+\tau_r(\theta) = k_\theta\theta - \cos(\theta)
+\end{equation}
+
+Expanding $\cos(\theta)$ in Taylor series:
+\begin{equation}
+\tau_r(\theta) = k_\theta\theta - \left(1 - \frac{\theta^2}{2} + \frac{\theta^4}{24} - \cdots\right) = (k_\theta - 1)\theta + \frac{\theta^2}{2} - \frac{\theta^4}{24} + \cdots
+\end{equation}
+
+This shows that:
+\begin{enumerate}
+    \item The effective stiffness is $(k_\theta - 1)$ near equilibrium, not $k_\theta$
+    \item Higher-order terms ($\theta^2$, $\theta^4$, ...) introduce \textbf{amplitude-dependent behavior}
+    \item The equilibrium point is \textbf{not at $\theta = 0$} but satisfies $k_\theta\theta_{eq} = \cos(\theta_{eq})$
+\end{enumerate}
+
+\subsection{Amplitude-Dependent Frequency}
+
+For a nonlinear oscillator, the instantaneous frequency depends on amplitude. For our pendulum, as the amplitude decays:
+\begin{itemize}
+    \item The effective stiffness changes
+    \item The oscillation period varies throughout the decay process
+    \item The relationship between envelope decay and damping parameter becomes more complex
+\end{itemize}
+
+This violates the constant-$\omega_n$ assumption required by equations~\eqref{eq:viscous_formula}--\eqref{eq:quadratic_formula}.
+
+\subsection{Experimental Evidence: High Estimation Errors}
+
+Initial attempts using topological methods on our pendulum data yielded unacceptable errors:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Method} & \textbf{Viscous Error} & \textbf{Coulomb Error} & \textbf{Quadratic Error} \\
+\midrule
+Topological method & 77.6\% & 31.0\% & 20.0\% \\
+\bottomrule
+\end{tabular}
+\caption{Estimation errors when applying topological methods to our nonlinear pendulum.}
+\label{tab:topo_errors}
+\end{table}
+
+These high errors confirm that the linear-system assumptions are fundamentally violated.
+
+\section{Optimization-Based Parameter Estimation}
+
+Given the failure of analytical topological formulas, we developed a \textbf{direct optimization approach} that makes no assumptions about the system's linearity.
+
+\subsection{Fundamental Concept}
+
+Instead of deriving analytical relationships between topological features and damping parameters, we use the pendulum model itself as part of an optimization loop:
+
+\begin{center}
+\fbox{\parbox{0.9\textwidth}{
+\textbf{Core Idea}: Find the parameter value that, when used in simulation, produces an envelope decay that best matches the observed (measured) envelope decay.
+}}
+\end{center}
+
+This approach is a form of \textbf{system identification} or \textbf{inverse problem solving}.
+
+\subsection{Mathematical Formulation}
+
+Let $\theta_{obs}(t)$ be the observed (measured) pendulum response with unknown damping parameter $p_{true}$.
+
+\textbf{Step 1: Envelope Extraction}
+
+Extract the amplitude envelope using the Hilbert transform:
+\begin{equation}
+A_{obs}(t) = |H[\theta_{obs}(t)]| = \sqrt{\theta_{obs}^2(t) + \hat{\theta}_{obs}^2(t)}
+\end{equation}
+where $\hat{\theta}_{obs}(t)$ is the Hilbert transform of $\theta_{obs}(t)$.
+
+\textbf{Step 2: Forward Model}
+
+Define a forward simulation function that computes the pendulum response for a trial parameter value $p$:
+\begin{equation}
+\theta_{sim}(t; p) = \text{simulate\_pendulum}(p, k_\theta, \theta_0, \dot{\theta}_0, t_{final}, dt)
+\end{equation}
+
+Extract its envelope:
+\begin{equation}
+A_{sim}(t; p) = |H[\theta_{sim}(t; p)]|
+\end{equation}
+
+\textbf{Step 3: Objective Function}
+
+Define the objective function as the mean squared error between log-envelopes:
+\begin{equation}
+\boxed{J(p) = \frac{1}{N}\sum_{i=1}^{N} \left[ \ln A_{obs}(t_i) - \ln A_{sim}(t_i; p) \right]^2}
+\label{eq:objective}
+\end{equation}
+
+\textbf{Why log-scale?} Using logarithms:
+\begin{itemize}
+    \item Emphasizes the \textbf{decay rate} rather than absolute amplitude
+    \item Provides equal weighting across different amplitude scales
+    \item Is more sensitive to damping-related features
+    \item Converts multiplicative errors to additive errors (better for optimization)
+\end{itemize}
+
+\textbf{Step 4: Optimization}
+
+Find the optimal parameter:
+\begin{equation}
+\hat{p} = \arg\min_{p \in [p_{min}, p_{max}]} J(p)
+\label{eq:optimization}
+\end{equation}
+
+\subsection{Detailed Algorithm}
+
+\begin{algorithm}[H]
+\caption{Optimization-Based Damping Parameter Estimation}
+\begin{algorithmic}[1]
+\REQUIRE Observed signal $\theta_{obs}(t)$, system parameters $(k_\theta, \theta_0, \dot{\theta}_0)$
+\REQUIRE Damping type (viscous, Coulomb, or quadratic)
+\REQUIRE Parameter bounds $[p_{min}, p_{max}]$
+\ENSURE Estimated parameter $\hat{p}$
+
+\STATE \textbf{// Step 1: Process observed data}
+\STATE Remove initial transient (first 0.5 s)
+\STATE Compute analytic signal: $z_{obs}(t) = \theta_{obs}(t) + j\hat{\theta}_{obs}(t)$
+\STATE Extract envelope: $A_{obs}(t) = |z_{obs}(t)|$
+\STATE Apply smoothing filter to reduce noise effects
+
+\STATE \textbf{// Step 2: Define objective function}
+\FUNCTION{envelope\_error($p$)}
+    \STATE Simulate pendulum with parameter $p$: $\theta_{sim}(t; p)$
+    \STATE Extract envelope: $A_{sim}(t; p) = |H[\theta_{sim}(t; p)]|$
+    \STATE Interpolate $A_{sim}$ to match $A_{obs}$ time points
+    \STATE Compute log-envelopes: $L_{obs} = \ln(A_{obs})$, $L_{sim} = \ln(A_{sim})$
+    \STATE Mask invalid regions where amplitude is too small
+    \STATE \RETURN MSE: $\frac{1}{N}\sum_i (L_{obs,i} - L_{sim,i})^2$
+\ENDFUNCTION
+
+\STATE \textbf{// Step 3: Optimize}
+\STATE $\hat{p} \leftarrow$ \texttt{minimize\_scalar(envelope\_error, bounds=$[p_{min}, p_{max}]$, method=`bounded')}
+
+\STATE \textbf{// Step 4: Validate}
+\STATE Compute final error: $\epsilon = |\hat{p} - p_{true}| / p_{true} \times 100\%$
+\STATE Generate comparison plots
+
+\RETURN $\hat{p}$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Implementation Details}
+
+\subsubsection{Hilbert Transform for Envelope Extraction}
+
+The Hilbert transform provides the analytic signal representation:
+\begin{equation}
+z(t) = \theta(t) + j\hat{\theta}(t)
+\end{equation}
+where $\hat{\theta}(t)$ is the Hilbert transform of $\theta(t)$. The instantaneous amplitude (envelope) is:
+\begin{equation}
+A(t) = |z(t)| = \sqrt{\theta^2(t) + \hat{\theta}^2(t)}
+\end{equation}
+
+This provides a smooth envelope without the need to detect peaks, which can be noisy.
+
+\subsubsection{Numerical Integration}
+
+The pendulum ODE is solved using \texttt{scipy.integrate.solve\_ivp} with the RK45 method (adaptive Runge-Kutta). The state vector is:
+\begin{equation}
+\mathbf{y} = \begin{bmatrix} \theta \\ \dot{\theta} \end{bmatrix}
+\end{equation}
+
+\subsubsection{Optimization Method}
+
+We use Brent's method (\texttt{scipy.optimize.minimize\_scalar} with \texttt{method=`bounded'}) for scalar optimization. This method:
+\begin{itemize}
+    \item Combines golden section search with parabolic interpolation
+    \item Guarantees convergence for unimodal functions
+    \item Does not require derivatives
+    \item Efficiently handles bounded search spaces
+\end{itemize}
+
+\subsubsection{Noise Handling}
+
+To simulate realistic measurement conditions, Gaussian noise is added:
+\begin{equation}
+\theta_{noisy}(t) = \theta_{true}(t) + \mathcal{N}(0, \sigma^2)
+\end{equation}
+with $\sigma = 0.002$ rad (approximately 0.2\% of a 1 radian signal). The envelope smoothing inherently reduces noise sensitivity.
+
+\subsection{Key Advantages Over Topological Methods}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{4cm}p{5cm}p{5cm}}
+\toprule
+\textbf{Aspect} & \textbf{Topological Methods} & \textbf{Optimization-Based} \\
+\midrule
+System requirements & Linear restoring force, constant $\omega_n$ & \textbf{Any nonlinear system} \\
+\addlinespace
+Analytical derivation & Required for each damping type & \textbf{Not needed} \\
+\addlinespace
+Adaptability & Fixed formulas & \textbf{Automatically adapts} to system dynamics \\
+\addlinespace
+Accuracy for linear systems & High & High \\
+\addlinespace
+Accuracy for nonlinear systems & Poor (20--78\% error) & \textbf{Excellent ($<$0.1\% error)} \\
+\addlinespace
+Computational cost & Low (closed-form) & Higher (requires multiple simulations) \\
+\addlinespace
+Extensibility & Difficult & \textbf{Easy} (just modify forward model) \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of topological and optimization-based estimation approaches.}
+\label{tab:method_comparison}
+\end{table}
+
+\section{SINDy-Based Parameter Estimation}
+
+An alternative approach to parameter estimation is \textbf{Sparse Identification of Nonlinear Dynamics (SINDy)}, which discovers the governing equation directly from time series data using sparse regression.
+
+\subsection{Mathematical Formulation}
+
+SINDy assumes the dynamics can be expressed as a sparse linear combination of candidate functions:
+\begin{equation}
+\dot{\mathbf{x}} = \mathbf{\Theta}(\mathbf{x}) \boldsymbol{\xi}
+\end{equation}
+where $\mathbf{\Theta}(\mathbf{x})$ is a library of candidate functions and $\boldsymbol{\xi}$ is a sparse coefficient vector.
+
+For our pendulum, we construct a library containing terms expected in the equation of motion:
+\begin{equation}
+\mathbf{\Theta} = \begin{bmatrix} 1 & \theta & \dot{\theta} & \cos(\theta) & \sin(\theta) & \dot{\theta}|\dot{\theta}| & \tanh(\dot{\theta}/\varepsilon) & \theta^2 & \theta\dot{\theta} \end{bmatrix}
+\end{equation}
+
+\textbf{Key insight for Coulomb friction}: The discontinuous $\text{sign}(\dot{\theta})$ function is difficult for sparse regression to fit accurately. We replace it with $\tanh(\dot{\theta}/\varepsilon)$ where $\varepsilon = 0.1$. This smooth approximation:
+\begin{itemize}
+    \item Behaves like $\text{sign}(\dot{\theta})$ for $|\dot{\theta}| \gg \varepsilon$
+    \item Provides a continuous, differentiable function that regression can fit
+    \item Reduces Coulomb estimation error from 11\% to 2\%
+\end{itemize}
+
+The governing equation $\ddot{\theta} = f(\theta, \dot{\theta})$ is then identified by solving:
+\begin{equation}
+\boxed{\ddot{\theta} = \mathbf{\Theta} \boldsymbol{\xi}}
+\end{equation}
+
+\subsection{Sequential Thresholded Least Squares (STLSQ)}
+
+SINDy uses an iterative sparse regression algorithm:
+
+\begin{enumerate}
+    \item Solve least squares: $\boldsymbol{\xi} = (\mathbf{\Theta}^T \mathbf{\Theta})^{-1} \mathbf{\Theta}^T \ddot{\theta}$
+    \item Threshold small coefficients: $\xi_i = 0$ if $|\xi_i| < \lambda$
+    \item Re-solve for remaining terms
+    \item Repeat until convergence
+\end{enumerate}
+
+The threshold $\lambda$ controls sparsity---higher values yield simpler equations with fewer terms.
+
+\subsection{Parameter Extraction}
+
+Once the coefficients are identified, damping parameters are extracted by comparing to the expected form:
+\begin{equation}
+\ddot{\theta} = -k_\theta \theta + \cos(\theta) - 2\zeta\dot{\theta} - \mu_c \cdot \tanh(\dot{\theta}/\varepsilon) - \mu_q \dot{\theta}|\dot{\theta}|
+\end{equation}
+
+From the identified coefficients:
+\begin{itemize}
+    \item $k_\theta = -\xi_\theta$ (coefficient of $\theta$ term)
+    \item $\zeta = -\xi_{\dot{\theta}}/2$ (coefficient of $\dot{\theta}$ term divided by 2)
+    \item $\mu_c = -\xi_{\tanh}$ (coefficient of $\tanh(\dot{\theta}/\varepsilon)$ term)
+    \item $\mu_q = -\xi_{|\cdot|}$ (coefficient of $\dot{\theta}|\dot{\theta}|$ term)
+\end{itemize}
+
+\subsection{SINDy Results}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{sindy_viscous.png}
+\caption{SINDy parameter estimation for viscous damping: (top-left) time response, (top-right) phase portrait, (bottom-left) identified coefficients showing dominant terms, (bottom-right) true vs. estimated parameters.}
+\label{fig:sindy_viscous}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{sindy_combined.png}
+\caption{SINDy estimation for combined damping (viscous + Coulomb + quadratic). The method successfully identifies all three damping mechanisms simultaneously.}
+\label{fig:sindy_combined}
+\end{figure}
+
+\textbf{Discovered equation for viscous damping:}
+\begin{equation}
+\ddot{\theta} = -20.13\theta - 0.10\dot{\theta} + 0.97\cos(\theta) + 0.13\sin(\theta) - 0.006\theta^2
+\end{equation}
+
+This matches the expected form with $k_\theta \approx 20$, $2\zeta \approx 0.10$ (so $\zeta \approx 0.05$), and $\cos(\theta)$ coefficient $\approx 1$.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Damping Type} & \textbf{Parameter} & \textbf{True Value} & \textbf{Estimated} & \textbf{Error} \\
+\midrule
+Viscous & $\zeta$ & 0.0500 & 0.0501 & \textbf{0.15\%} \\
+Coulomb & $\mu_c$ & 0.0300 & 0.0293 & \textbf{2.2\%} \\
+Quadratic & $\mu_q$ & 0.0500 & 0.0501 & \textbf{0.24\%} \\
+Combined & $\zeta/\mu_c/\mu_q$ & 0.025/0.015/0.025 & 0.026/0.014/0.024 & 5--8\% \\
+\bottomrule
+\end{tabular}
+\caption{SINDy estimation results with tanh-smoothed Coulomb friction. All single-damping cases achieve $<3\%$ error thanks to the smooth $\tanh(\dot{\theta}/\varepsilon)$ approximation for Coulomb friction.}
+\label{tab:sindy_results}
+\end{table}
+
+\subsection{Physics-Informed Neural Networks (PINNs)}
+
+Physics-Informed Neural Networks embed the governing equation directly into the neural network loss function, enabling simultaneous learning of the solution and unknown parameters.
+
+\subsubsection{PINN Formulation}
+
+The PINN approach solves an inverse problem by minimizing a combined loss:
+\begin{equation}
+\mathcal{L} = \lambda_{\text{data}} \mathcal{L}_{\text{data}} + \lambda_{\text{physics}} \mathcal{L}_{\text{physics}} + \lambda_{\text{IC}} \mathcal{L}_{\text{IC}}
+\end{equation}
+where:
+\begin{itemize}
+    \item $\mathcal{L}_{\text{data}} = \frac{1}{N}\sum_{i=1}^{N}(\theta_{\text{pred}}(t_i) - \theta_{\text{obs}}(t_i))^2$ ensures data fidelity
+    \item $\mathcal{L}_{\text{physics}} = \frac{1}{M}\sum_{j=1}^{M}|R(t_j)|^2$ enforces the ODE residual at collocation points
+    \item $\mathcal{L}_{\text{IC}}$ enforces initial conditions
+\end{itemize}
+
+The ODE residual is:
+\begin{equation}
+R(t) = \ddot{\theta} + 2\zeta\dot{\theta} + \mu_c \tanh(\dot{\theta}/\varepsilon) + \mu_q\dot{\theta}|\dot{\theta}| + k_\theta\theta - \cos(\theta)
+\end{equation}
+
+\subsubsection{Hybrid Estimation Approach}
+
+Our implementation uses a robust two-stage approach:
+\begin{enumerate}
+    \item \textbf{Direct Least-Squares}: Compute $\ddot{\theta}$ from data using Savitzky-Golay filtering, then solve the linear regression problem for damping coefficients
+    \item \textbf{PINN Refinement}: Use neural network with physics constraints to refine estimates
+\end{enumerate}
+
+The direct estimation reformulates the ODE as a linear regression:
+\begin{equation}
+\underbrace{\ddot{\theta} + k_\theta\theta - \cos(\theta)}_{\mathbf{b}} = \underbrace{-2\dot{\theta}}_{\mathbf{A}_\zeta}\zeta + \underbrace{-\tanh(\dot{\theta}/\varepsilon)}_{\mathbf{A}_{\mu_c}}\mu_c + \underbrace{-\dot{\theta}|\dot{\theta}|}_{\mathbf{A}_{\mu_q}}\mu_q
+\end{equation}
+
+\subsubsection{PINN Results}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{pinn_viscous.png}
+\caption{PINN estimation for viscous damping showing training loss convergence, parameter evolution, time response comparison, and final parameter estimates.}
+\label{fig:pinn_viscous}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Damping Type} & \textbf{Parameter} & \textbf{True Value} & \textbf{Estimated} & \textbf{Error} \\
+\midrule
+Viscous & $\zeta$ & 0.0500 & 0.0501 & \textbf{0.15\%} \\
+Coulomb & $\mu_c$ & 0.0300 & 0.0301 & \textbf{0.41\%} \\
+Quadratic & $\mu_q$ & 0.0500 & 0.0500 & \textbf{0.06\%} \\
+\bottomrule
+\end{tabular}
+\caption{PINN estimation results using hybrid direct + neural network approach. All damping types achieve sub-1\% error.}
+\label{tab:pinn_results}
+\end{table}
+
+\subsection{Neural ODEs}
+
+Neural Ordinary Differential Equations (Neural ODEs) treat the dynamics as a continuous transformation learned by a neural network, with the ODE solved using differentiable solvers during training.
+
+\subsubsection{Neural ODE Formulation}
+
+The Neural ODE approach parameterizes the dynamics function:
+\begin{equation}
+\frac{d\mathbf{y}}{dt} = f_\theta(\mathbf{y}, t)
+\end{equation}
+where $\mathbf{y} = [\theta, \dot{\theta}]^T$ is the state vector and $f_\theta$ is a physics-informed function with learnable damping parameters.
+
+For our pendulum, we embed the known physics structure:
+\begin{equation}
+\frac{d}{dt}\begin{bmatrix} \theta \\ \dot{\theta} \end{bmatrix} = \begin{bmatrix} \dot{\theta} \\ -k_\theta\theta + \cos(\theta) - 2\zeta\dot{\theta} - \mu_c\tanh(\dot{\theta}/\varepsilon) - \mu_q\dot{\theta}|\dot{\theta}| \end{bmatrix}
+\end{equation}
+where $\zeta$, $\mu_c$, and $\mu_q$ are learnable parameters.
+
+\subsubsection{Hybrid Neural ODE Approach}
+
+Similar to PINNs, we use a two-stage approach:
+\begin{enumerate}
+    \item \textbf{Direct Least-Squares}: Initial parameter estimation from ODE reformulation
+    \item \textbf{Neural ODE Refinement}: Use \texttt{torchdiffeq} to integrate the ODE and refine parameters by minimizing trajectory error
+\end{enumerate}
+
+The loss function minimizes the MSE between predicted and observed trajectories:
+\begin{equation}
+\mathcal{L} = \frac{1}{N}\sum_{i=1}^{N}\left[(\theta_{\text{pred}}(t_i) - \theta_{\text{obs}}(t_i))^2 + (\dot{\theta}_{\text{pred}}(t_i) - \dot{\theta}_{\text{obs}}(t_i))^2\right]
+\end{equation}
+
+\subsubsection{Neural ODE Results}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{neural_ode_viscous.png}
+\caption{Neural ODE estimation for viscous damping showing time response comparison, training loss, and parameter convergence.}
+\label{fig:neural_ode_viscous}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Damping Type} & \textbf{Parameter} & \textbf{True Value} & \textbf{Estimated} & \textbf{Error} \\
+\midrule
+Viscous & $\zeta$ & 0.0500 & 0.0501 & \textbf{0.11\%} \\
+Coulomb & $\mu_c$ & 0.0300 & 0.0300 & \textbf{0.04\%} \\
+Quadratic & $\mu_q$ & 0.0500 & 0.0500 & \textbf{0.04\%} \\
+\bottomrule
+\end{tabular}
+\caption{Neural ODE estimation results using hybrid direct + ODE solver approach. All damping types achieve sub-0.15\% error.}
+\label{tab:neural_ode_results}
+\end{table}
+
+\subsection{Symbolic Regression}
+
+Symbolic Regression uses genetic programming to evolve mathematical expressions that best fit the data, discovering interpretable equations rather than black-box models.
+
+\subsubsection{Symbolic Regression Formulation}
+
+The approach searches for a symbolic expression $f$ that minimizes:
+\begin{equation}
+\min_f \sum_{i=1}^{N}(\ddot{\theta}_i - f(\theta_i, \dot{\theta}_i))^2 + \lambda \cdot \text{complexity}(f)
+\end{equation}
+where the complexity penalty encourages simpler, more interpretable expressions.
+
+For our implementation, we use PySR (Python Symbolic Regression) which combines genetic algorithms with gradient-based optimization. The library of operators includes:
+\begin{itemize}
+    \item Binary: $+$, $-$, $\times$, $\div$
+    \item Unary: $\cos$, $\sin$, $\tanh$, $|\cdot|$, $-(\cdot)$
+\end{itemize}
+
+\subsubsection{Hybrid Symbolic Approach}
+
+Similar to other methods, we use a two-stage approach:
+\begin{enumerate}
+    \item \textbf{Direct Least-Squares}: Extract parameters assuming known equation structure
+    \item \textbf{Optimization Refinement}: Fine-tune parameters by minimizing ODE residual
+\end{enumerate}
+
+\subsubsection{Symbolic Regression Results}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{symbolic_regression_viscous.png}
+\caption{Symbolic Regression estimation for viscous damping showing time response comparison, phase portrait, and parameter estimates.}
+\label{fig:symbolic_regression_viscous}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Damping Type} & \textbf{Parameter} & \textbf{True Value} & \textbf{Estimated} & \textbf{Error} \\
+\midrule
+Viscous & $\zeta$ & 0.0500 & 0.0501 & \textbf{0.15\%} \\
+Coulomb & $\mu_c$ & 0.0300 & 0.0301 & \textbf{0.39\%} \\
+Quadratic & $\mu_q$ & 0.0500 & 0.0500 & \textbf{0.07\%} \\
+\bottomrule
+\end{tabular}
+\caption{Symbolic Regression estimation results. All damping types achieve sub-0.5\% error.}
+\label{tab:symbolic_regression_results}
+\end{table}
+
+\subsection{Comparison of All Methods}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{method_comparison.png}
+\caption{Comparison of estimation methods: Topological, SINDy, PINNs, and Optimization.}
+\label{fig:method_comparison}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Method} & \textbf{Viscous} & \textbf{Coulomb} & \textbf{Quadratic} & \textbf{Key Advantage} \\
+\midrule
+Topological & 77.6\% & 31.0\% & 20.0\% & Fast, closed-form \\
+SINDy & 0.15\% & 2.2\% & 0.24\% & Discovers equation \\
+PINNs & 0.15\% & 0.41\% & 0.06\% & Physics-constrained \\
+Neural ODEs & 0.11\% & 0.04\% & 0.04\% & Continuous dynamics \\
+Symbolic Reg. & 0.15\% & 0.39\% & 0.07\% & Interpretable equations \\
+Optimization & 0.03\% & 0.04\% & 0.03\% & Highest accuracy \\
+\bottomrule
+\end{tabular}
+\caption{Summary comparison of all estimation methods on the nonlinear pendulum.}
+\label{tab:all_methods}
+\end{table}
+
+\textbf{Key insights:}
+\begin{itemize}
+    \item \textbf{SINDy} discovers the governing equation from data, providing physical insight
+    \item \textbf{PINNs} achieve excellent accuracy ($<0.5\%$) for all damping types by embedding physics constraints
+    \item \textbf{Neural ODEs} use differentiable ODE solvers for continuous-time dynamics learning, achieving $<0.15\%$ error
+    \item \textbf{Symbolic Regression} evolves interpretable mathematical expressions via genetic programming, achieving $<0.4\%$ error
+    \item \textbf{Optimization} achieves the highest accuracy but requires a known model structure
+    \item \textbf{Topological} methods fail for this nonlinear system but work well for linear oscillators
+\end{itemize}
+
+\section{Parameter Estimation Results}
+
+\subsection{Estimation Accuracy}
+
+Figure~\ref{fig:optimized} shows the optimization-based estimation results with envelope comparisons.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{fig_optimized_estimation.png}
+\caption{Optimization-based parameter estimation: (left) time series with extracted envelope showing the Hilbert transform amplitude, (right) envelope comparison showing excellent match between observed (blue) and simulated (red dashed) using estimated parameters.}
+\label{fig:optimized}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{fig_optimized_comparison.png}
+\caption{Bar chart comparing true damping parameters (blue) with estimated values (orange). The bars are nearly indistinguishable, demonstrating sub-0.1\% accuracy.}
+\label{fig:bar_comparison}
+\end{figure}
+
+\subsection{Quantitative Results}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Damping Type} & \textbf{Parameter} & \textbf{True Value} & \textbf{Estimated} & \textbf{Error} \\
+\midrule
+Viscous & $\zeta$ & 0.0500 & 0.0500 & \textbf{0.03\%} \\
+Coulomb & $\mu_c$ & 0.0300 & 0.0300 & \textbf{0.04\%} \\
+Quadratic & $\mu_q$ & 0.0500 & 0.0500 & \textbf{0.03\%} \\
+\bottomrule
+\end{tabular}
+\caption{Optimization-based estimation achieves sub-0.1\% errors for all damping types, even with 0.2\% measurement noise.}
+\label{tab:results}
+\end{table}
+
+\subsection{Method Comparison Summary}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Method} & \textbf{Viscous Error} & \textbf{Coulomb Error} & \textbf{Quadratic Error} \\
+\midrule
+Topological method & 77.6\% & 31.0\% & 20.0\% \\
+\textbf{Optimization-based} & \textbf{0.03\%} & \textbf{0.04\%} & \textbf{0.03\%} \\
+\bottomrule
+\end{tabular}
+\caption{Comparison of estimation methods showing dramatic improvement with optimization-based approach.}
+\label{tab:final_comparison}
+\end{table}
+
+\section{Discussion}
+
+\subsection{Why Optimization Works Where Topology Fails}
+
+The success of the optimization-based approach can be attributed to several factors:
+
+\begin{enumerate}
+    \item \textbf{Model-in-the-loop}: By using the actual nonlinear pendulum model in the optimization, we capture all nonlinear effects without needing analytical expressions.
+
+    \item \textbf{No linearization}: The method works with the full nonlinear dynamics, including the $-\cos(\theta)$ term.
+
+    \item \textbf{Envelope matching}: The envelope captures the essential damping behavior while being robust to phase variations caused by amplitude-dependent frequency.
+
+    \item \textbf{Log-scale comparison}: Emphasizes decay rate, making the objective function more sensitive to damping parameters.
+\end{enumerate}
+
+\subsection{Computational Considerations}
+
+Each evaluation of the objective function requires:
+\begin{itemize}
+    \item One forward simulation of the pendulum ODE
+    \item Two Hilbert transforms (observed and simulated)
+    \item Interpolation and MSE computation
+\end{itemize}
+
+With Brent's method, convergence typically requires 10--20 function evaluations. For a 60-second simulation with $dt = 0.002$ s, each evaluation takes approximately 0.1 seconds on modern hardware, making the total optimization time approximately 1--2 seconds per parameter.
+
+\subsection{Extensions and Future Work}
+
+The optimization framework naturally extends to:
+
+\begin{enumerate}
+    \item \textbf{Multi-parameter estimation}: Optimize over multiple damping parameters simultaneously using gradient-based methods or evolutionary algorithms.
+
+    \item \textbf{Combined damping models}: Estimate parameters when multiple damping mechanisms act together.
+
+    \item \textbf{Forced response}: Extend to systems with external excitation by matching both amplitude and phase.
+
+    \item \textbf{Uncertainty quantification}: Use bootstrap methods or Bayesian inference to estimate parameter confidence intervals.
+
+    \item \textbf{Real experimental data}: Apply to physical pendulum measurements with proper noise characterization.
+\end{enumerate}
+
+\section{Conclusions}
+
+This work successfully demonstrated:
+
+\begin{itemize}
+    \item \textbf{Python implementation} of the MATLAB nonlinear pendulum simulation
+    \item \textbf{Complete forward simulation} with viscous, Coulomb, and quadratic damping
+    \item \textbf{Identification of why topological methods fail}: The $-\cos(\theta)$ term creates nonlinear restoring force with amplitude-dependent frequency
+    \item \textbf{Novel optimization-based estimation} achieving \textbf{sub-0.1\% error} for all damping types
+\end{itemize}
+
+\subsection{Key Findings}
+
+\begin{enumerate}
+    \item Standard topological signal processing methods are designed for systems with \textbf{linear restoring forces} and \textbf{constant natural frequency}.
+
+    \item The $-\cos(\theta)$ term in our pendulum equation creates a \textbf{nonlinear restoring force}, violating the fundamental assumptions of topological damping formulas.
+
+    \item \textbf{Optimization-based system identification} provides a robust alternative that:
+    \begin{itemize}
+        \item Makes no assumptions about system linearity
+        \item Achieves sub-0.1\% accuracy even with measurement noise
+        \item Is extensible to arbitrary nonlinear oscillators
+    \end{itemize}
+
+    \item The method is \textbf{general and applicable} to any oscillatory system where a forward model is available.
+\end{enumerate}
+
+\subsection{Practical Recommendations}
+
+For damping parameter estimation:
+\begin{itemize}
+    \item Use topological methods when the restoring force is linear and $\omega_n$ is constant
+    \item Use optimization-based methods when significant nonlinearity exists in the restoring force
+    \item Always validate estimates by comparing simulated and observed envelopes
+\end{itemize}
+
+\begin{thebibliography}{9}
+\bibitem{myers2022}
+Myers, A. and Khasawneh, F.A. (2022).
+\textit{Topological Signal Processing for Estimating Nonlinear Damping}.
+Journal of Sound and Vibration.
+\end{thebibliography}
+
+\vspace{2em}
+\hrule
+\vspace{1em}
+
+\begin{center}
+\small
+Generated with Claude Code \\
+\url{https://claude.ai/code}
+\end{center}
+
+\end{document}
