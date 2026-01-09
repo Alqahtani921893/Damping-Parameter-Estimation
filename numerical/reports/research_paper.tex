@@ -506,43 +506,47 @@ Genetic Alg. & $\sim$0 & $\sim$0 & $\sim$0 \\
 
 Figure~\ref{fig:ranking} shows the ranking of methods by average error across all damping types.
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=\columnwidth]{fig_ranking.pdf}
-\caption{Methods ranked by average estimation error. The red dashed line indicates the 0.1\% threshold.}
-\label{fig:ranking}
-\end{figure}
+% Figure temporarily removed - regenerate with generate_paper_figures.py
+%\begin{figure}[H]
+%\centering
+%\includegraphics[width=\columnwidth]{../figures/fig_ranking.png}
+%\caption{Methods ranked by average estimation error. The red dashed line indicates the 0.1\% threshold.}
+%\label{fig:ranking}
+%\end{figure}
 
 Figure~\ref{fig:heatmap} presents a heatmap visualization of errors across all method-damping combinations.
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=\columnwidth]{fig_error_heatmap.pdf}
-\caption{Heatmap of estimation errors (log scale). Green indicates low error, red indicates high error.}
-\label{fig:heatmap}
-\end{figure}
+% Figure temporarily removed - regenerate with generate_paper_figures.py
+%\begin{figure}[H]
+%\centering
+%\includegraphics[width=\columnwidth]{../figures/fig_error_heatmap.png}
+%\caption{Heatmap of estimation errors (log scale). Green indicates low error, red indicates high error.}
+%\label{fig:heatmap}
+%\end{figure}
 
 \subsection{Category Comparison}
 
 Figure~\ref{fig:category} compares the three categories of methods.
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\textwidth]{fig_category_comparison.pdf}
-\caption{Comparison of methods by category for each damping type. Red dashed line indicates 0.1\% threshold.}
-\label{fig:category}
-\end{figure*}
+% Figure temporarily removed - regenerate with generate_paper_figures.py
+%\begin{figure*}[t]
+%\centering
+%\includegraphics[width=\textwidth]{../figures/fig_category_comparison.png}
+%\caption{Comparison of methods by category for each damping type. Red dashed line indicates 0.1\% threshold.}
+%\label{fig:category}
+%\end{figure*}
 
 \subsection{System Behavior}
 
 Figure~\ref{fig:damping_types} illustrates the oscillation characteristics for each damping type.
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\textwidth]{fig_damping_types.pdf}
-\caption{Time response of the pendulum for each damping type with true parameter values.}
-\label{fig:damping_types}
-\end{figure*}
+% Figure temporarily removed - regenerate with generate_paper_figures.py
+%\begin{figure*}[t]
+%\centering
+%\includegraphics[width=\textwidth]{../figures/fig_damping_types.png}
+%\caption{Time response of the pendulum for each damping type with true parameter values.}
+%\label{fig:damping_types}
+%\end{figure*}
 
 \subsection{Convergence Behavior of Iterative Methods}
 
@@ -550,7 +554,7 @@ The convergence characteristics of iterative methods---PINNs, Neural ODEs, and G
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{fig_convergence_all_methods.png}
+\includegraphics[width=\textwidth]{../figures/fig_convergence_all_methods.png}
 \caption{Parameter convergence during training for iterative methods (PINN, Neural ODE, Genetic Algorithm) across all three damping types. The black dashed line indicates the true parameter value. All methods converge to within 1\% of the true value, with GA achieving near-zero error.}
 \label{fig:convergence_all}
 \end{figure*}
@@ -569,7 +573,7 @@ Figure~\ref{fig:convergence_comparison} presents a final comparison of estimated
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\columnwidth]{fig_convergence_final_comparison.png}
+\includegraphics[width=\columnwidth]{../figures/fig_convergence_final_comparison.png}
 \caption{Final parameter estimates by method. Gold stars indicate true values. All iterative methods achieve excellent accuracy ($<$0.5\% error), with GA achieving $\sim$0\% error for all damping types.}
 \label{fig:convergence_comparison}
 \end{figure}
